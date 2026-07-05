@@ -1,0 +1,13 @@
+{
+  "name": "Beat the Drop",
+  "short_name": "BeatDrop",
+  "description": "Arcade de reflejos: clasifica antes de que cruce la línea.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f1120",
+  "theme_color": "#0f1120",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Beat the Drop</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f1120">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none; }
+  html, body { height:100%; overflow:hidden; background:#0f1120; font-family:'Segoe UI', system-ui, sans-serif; }
+  #game { position:relative; width:100%; height:100%; }
+  canvas { display:block; width:100%; height:100%; touch-action:none; }
+
+  #hud {
+    position:absolute; top:0; left:0; right:0;
+    display:flex; justify-content:space-between; align-items:center;
+    padding: max(12px, env(safe-area-inset-top)) 16px 0 16px;
+    color:#fff; font-weight:700; pointer-events:none;
+    text-shadow: 0 2px 6px rgba(0,0,0,.5);
+  }
+  #hud .score { font-size: 22px; }
+  #hud .combo { font-size: 14px; color:#ffd166; }
+  #hud .lives { font-size: 18px; letter-spacing: 2px; }
+
+  #zones {
+    position:absolute; left:0; right:0; bottom:0;
+    display:flex; height:22%;
+  }
+  .zone {
+    flex:1; display:flex; align-items:center; justify-content:center;
+    font-weight:800; font-size: clamp(18px, 5vw, 28px);
+    color:#fff; letter-spacing:1px;
+    transition: filter .08s ease;
+  }
+  .zone.left { background: linear-gradient(180deg, rgba(239,71,111,0), rgba(239,71,111,.35)); border-top:2px solid rgba(239,71,111,.6); }
+  .zone.right { background: linear-gradient(180deg, rgba(6,214,160,0), rgba(6,214,160,.35)); border-top:2px solid rgba(6,214,160,.6); }
+  .zone.flash { filter: brightness(1.6); }
+
+  #line {
+    position:absolute; left:0; right:0; height:2px;
+    background: repeating-linear-gradient(90deg, rgba(255,255,255,.6) 0 10px, transparent 10px 20px);
+  }
+
+  #overlay {
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center;
+    color:#fff; background:rgba(15,17,32,.92); padding:24px; gap:14px;
+  }
+  #overlay h1 { font-size: 30px; }
+  #overlay p { color:#bcbcd8; max-width:320px; line-height:1.5; font-size:14px; }
+  #overlay .big { font-size:44px; font-weight:800; color:#ffd166; }
+  button {
+    background:#5b6bff; color:#fff; border:none; border-radius:14px;
+    padding:14px 28px; font-size:17px; font-weight:700; cursor:pointer;
+    box-shadow: 0 6px 0 #3c47c9;
+  }
+  button:active { transform: translateY(4px); box-shadow: 0 2px 0 #3c47c9; }
+  .hidden { display:none !important; }
+  #edit {
+    position:absolute; top:10px; right:10px; background:rgba(255,255,255,.08);
+    color:#aaa; border:none; border-radius:8px; font-size:11px; padding:6px 10px;
+    pointer-events:all;
+  }
+</style>
+</head>
+<body>
+<div id="game">
+  <canvas id="canvas"></canvas>
+  <div id="line"></div>
+  <div id="hud">
+    <div class="score">0</div>
+    <div class="combo"></div>
+    <div class="lives">♥♥♥</div>
+  </div>
+  <div id="zones">
+    <div class="zone left" id="zoneLeft">FALSO</div>
+    <div class="zone right" id="zoneRight">VERDADERO</div>
+  </div>
+  <div id="overlay">
+    <h1>Beat the Drop</h1>
+    <p>Clasifica cada frase antes de que cruce la línea.<br>
+    Toca <b style="color:#ef476f">izquierda</b> si es <b>FALSO</b>,
+    <b style="color:#06d6a0">derecha</b> si es <b>VERDADERO</b>.</p>
+    <div class="big" id="highScoreDisplay">0</div>
+    <p style="margin-top:-10px">Récord</p>
+    <button id="startBtn">Jugar</button>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   CONTENIDO — edita este arreglo para cambiar el tema del juego.
+   correct:true  -> la respuesta correcta es tocar la zona DERECHA (Verdadero)
+   correct:false -> la respuesta correcta es tocar la zona IZQUIERDA (Falso)
+   ========================================================= */
+const CONTENT = [
+  { text: "She go to school every day.", correct: false },
+  { text: "She goes to school every day.", correct: true },
+  { text: "They was playing football.", correct: false },
+  { text: "They were playing football.", correct: true },
+  { text: "I have eaten breakfast already.", correct: true },
+  { text: "I have ate breakfast already.", correct: false },
+  { text: "The cat is on the table.", correct: true },
+  { text: "The cat are on the table.", correct: false },
+  { text: "He don't like coffee.", correct: false },
+  { text: "He doesn't like coffee.", correct: true },
+  { text: "We are going to the beach tomorrow.", correct: true },
+  { text: "We is going to the beach tomorrow.", correct: false },
+  { text: "There is many books on the shelf.", correct: false },
+  { text: "There are many books on the shelf.", correct: true },
+  { text: "My sister more tall than me.", correct: false },
+  { text: "My sister is taller than me.", correct: true },
+];
+
+/* =========================================================
+   MOTOR DEL JUEGO
+   ========================================================= */
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('overlay');
+const startBtn = document.getElementById('startBtn');
+const scoreEl = document.querySelector('#hud .score');
+const comboEl = document.querySelector('#hud .combo');
+const livesEl = document.querySelector('#hud .lives');
+const highScoreDisplay = document.getElementById('highScoreDisplay');
+const zoneLeft = document.getElementById('zoneLeft');
+const zoneRight = document.getElementById('zoneRight');
+const lineEl = document.getElementById('line');
+
+let W, H, lineY, zonesTop;
+function resize() {
+  W = canvas.width = window.innerWidth * devicePixelRatio;
+  H = canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  zonesTop = window.innerHeight * 0.78;
+  lineY = zonesTop;
+  lineEl.style.top = lineY + 'px';
+}
+window.addEventListener('resize', resize);
+resize();
+
+const HS_KEY = 'beatdrop_highscore';
+let highScore = parseInt(localStorage.getItem(HS_KEY) || '0', 10);
+highScoreDisplay.textContent = highScore;
+
+let state = 'idle'; // idle | playing | over
+let score, combo, lives, speed, spawnTimer, spawnInterval, current, deck;
+
+function shuffledDeck() {
+  const d = [...CONTENT];
+  for (let i = d.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [d[i], d[j]] = [d[j], d[i]];
+  }
+  return d;
+}
+
+function nextItem() {
+  if (!deck.length) deck = shuffledDeck();
+  const data = deck.pop();
+  return {
+    ...data,
+    y: -40,
+    x: window.innerWidth / 2,
+    resolved: false,
+  };
+}
+
+function resetGame() {
+  score = 0; combo = 0; lives = 3; speed = 70; // px/seg
+  spawnInterval = 1900;
+  spawnTimer = 0;
+  deck = shuffledDeck();
+  current = nextItem();
+  updateHUD();
+}
+
+function updateHUD() {
+  scoreEl.textContent = score;
+  comboEl.textContent = combo > 1 ? `x${combo} combo` : '';
+  livesEl.textContent = '♥'.repeat(Math.max(lives,0)) + '♡'.repeat(3-Math.max(lives,0));
+}
+
+function beep(freq, dur, type='sine') {
+  try {
+    const actx = beep._ctx || (beep._ctx = new (window.AudioContext||window.webkitAudioContext)());
+    const o = actx.createOscillator(); const g = actx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.value = 0.08;
+    o.connect(g); g.connect(actx.destination);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + dur);
+    o.stop(actx.currentTime + dur);
+  } catch(e) {}
+}
+
+function vibrate(ms) { if (navigator.vibrate) navigator.vibrate(ms); }
+
+function flashZone(el) {
+  el.classList.add('flash');
+  setTimeout(() => el.classList.remove('flash'), 120);
+}
+
+function judge(choiceIsTrue) {
+  if (state !== 'playing' || current.resolved) return;
+  current.resolved = true;
+  const correct = (choiceIsTrue === current.correct);
+  if (correct) {
+    combo++;
+    const gained = 10 * Math.max(1, Math.min(combo, 8));
+    score += gained;
+    beep(660 + combo*20, 0.12);
+    vibrate(15);
+    flashZone(choiceIsTrue ? zoneRight : zoneLeft);
+    if (score > 0 && score % 100 < gained) {
+      speed += 14;
+      spawnInterval = Math.max(800, spawnInterval - 90);
+    }
+  } else {
+    combo = 0;
+    lives--;
+    beep(140, 0.25, 'sawtooth');
+    vibrate([30,40,30]);
+    flashZone(choiceIsTrue ? zoneRight : zoneLeft);
+    if (lives <= 0) { updateHUD(); return endGame(); }
+  }
+  updateHUD();
+  current = nextItem();
+}
+
+function endGame() {
+  state = 'over';
+  if (score > highScore) {
+    highScore = score;
+    localStorage.setItem(HS_KEY, highScore);
+  }
+  highScoreDisplay.textContent = highScore;
+  document.querySelector('#overlay h1').textContent = 'Game Over';
+  document.querySelector('#overlay p').innerHTML = `Puntaje: <b style="color:#fff">${score}</b>`;
+  startBtn.textContent = 'Jugar de nuevo';
+  overlay.classList.remove('hidden');
+}
+
+let lastTime = 0;
+function loop(t) {
+  const dt = Math.min(0.05, (t - lastTime) / 1000 || 0);
+  lastTime = t;
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (state === 'playing') {
+    current.y += speed * dt * devicePixelRatio;
+
+    if (!current.resolved && current.y / devicePixelRatio > zonesTop + 30) {
+      // se pasó sin resolver -> falla
+      current.resolved = true;
+      combo = 0; lives--;
+      beep(120, 0.25, 'sawtooth'); vibrate(40);
+      updateHUD();
+      if (lives <= 0) { endGame(); }
+      else current = nextItem();
+    }
+
+    drawItem(current);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+function drawItem(item) {
+  const x = item.x * devicePixelRatio;
+  const y = item.y;
+  const fontSize = 20 * devicePixelRatio;
+  ctx.font = `700 ${fontSize}px 'Segoe UI', sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const paddingX = 18 * devicePixelRatio;
+  const metrics = ctx.measureText(item.text);
+  const boxW = Math.min(W - 20*devicePixelRatio, metrics.width + paddingX*2);
+  const boxH = fontSize * 2;
+
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.4)';
+  ctx.shadowBlur = 10 * devicePixelRatio;
+  ctx.fillStyle = '#1c1e3a';
+  roundRect(ctx, x - boxW/2, y - boxH/2, boxW, boxH, 14*devicePixelRatio);
+  ctx.fill();
+  ctx.restore();
+
+  ctx.fillStyle = '#fff';
+  wrapText(ctx, item.text, x, y, boxW - paddingX*1.4, fontSize*1.15);
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+function wrapText(ctx, text, cx, cy, maxWidth, lineHeight) {
+  const words = text.split(' ');
+  let lines = [], line = '';
+  for (const w of words) {
+    const test = line ? line + ' ' + w : w;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line); line = w;
+    } else line = test;
+  }
+  lines.push(line);
+  const startY = cy - (lines.length-1)*lineHeight/2;
+  lines.forEach((l, i) => ctx.fillText(l, cx, startY + i*lineHeight));
+}
+
+// Input
+zoneLeft.addEventListener('pointerdown', e => { e.preventDefault(); judge(false); });
+zoneRight.addEventListener('pointerdown', e => { e.preventDefault(); judge(true); });
+
+startBtn.addEventListener('click', () => {
+  overlay.classList.add('hidden');
+  document.querySelector('#overlay h1').textContent = 'Beat the Drop';
+  resetGame();
+  state = 'playing';
+});
+
+requestAnimationFrame(loop);
+
+// Registrar service worker para instalación PWA
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
